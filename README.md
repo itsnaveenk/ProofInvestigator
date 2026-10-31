@@ -1,101 +1,161 @@
-# PromiseProof
+<div align="center">
 
-**Know the fine print before you pay.**
+# 🔍 PromiseProof
 
-Ask about a travel deal in plain English (or drop in a screenshot) — "Delta's site says no change fees; if I cancel my Basic Economy ticket in 3 days, do I get my money back?" — and PromiseProof's agent finds the provider's official cancellation/refund terms, reads the live pages with [Anakin](https://anakin.io), and returns a verdict backed by quotes that are checked word-for-word against those pages.
+### Know the fine print *before* you pay.
 
-Verdicts:
+An AI research agent that checks travel deals' cancellation and refund promises against the provider's **live, official terms**, and backs every finding with quotes it has verified word-for-word.
+
+[🎬 Demo video](https://drive.google.com/file/d/165ZpCZd6ZquuaSfA50Q-TqmYAO-2QcBK/view?usp=sharing) · [⚡ Quick start](#-quick-start) · [🏗️ Architecture](#️-architecture) · [🛡️ Trust & safety](#️-trust--safety) · [🧪 Testing](#-testing)
+
+![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=next.js) ![TypeScript](https://img.shields.io/badge/TypeScript-5-3178c6?logo=typescript&logoColor=white) ![Tailwind](https://img.shields.io/badge/Tailwind-4-38bdf8?logo=tailwindcss&logoColor=white) ![Anakin](https://img.shields.io/badge/Live%20web%20data-Anakin-6d28d9) ![GenieX](https://img.shields.io/badge/On--device%20AI-Qualcomm%20GenieX-3253dc) ![Wispr Flow](https://img.shields.io/badge/Voice-Wispr%20Flow-111)
+
+<img src="docs/demo.png" alt="PromiseProof report showing a Qualified verdict for a Delta Basic Economy refund claim" width="860">
+
+</div>
+
+---
+
+## 😤 The problem
+
+"**Free cancellation.**" "**No change fees.**" "**Fully refundable.**"
+
+Travel offers lead with promises like these, but the conditions sit in a separate policy page: 24-hour windows, fare-class exclusions, "eCredit, not cash", deadlines tied to the property's local time. Most travelers only discover these rules **after** they've paid and need to cancel.
+
+PromiseProof is for **anyone booking a flight, hotel, or package** who wants a straight answer, with proof, before they pay.
+
+## ✨ What it does
+
+| | Feature | |
+|---|---|---|
+| 🗣️ | **Ask in plain English** | Type or dictate a question (works with system-wide dictation like Wispr Flow). Links are optional. |
+| 🤖 | **Agentic research** | A tool-calling agent searches the web, finds the provider's *official* policy pages, and reads them live. You watch each step stream in. |
+| ⚖️ | **Clear verdict** | `SUPPORTED` · `QUALIFIED` · `CONTRADICTED` · `UNVERIFIED`, with the promise and the fine print side by side. |
+| 🔒 | **Verified quotes only** | Every quote is matched against the scraped page text. If the AI invents a quote, it's discarded, and a verdict with no verified policy quote is downgraded to `UNVERIFIED`. |
+| 📸 | **Screenshot input, read on-device** | Attach or paste a screenshot of a deal. **Qualcomm GenieX** reads it with a local vision model, so your booking details never leave your machine. |
+| 🔗 | **Compare two pages** | Already have the offer and policy URLs? Compare them directly. |
+| ✅ | **Actionable output** | Important conditions, open questions to ask the provider, and practical next steps. |
+
+### Verdicts
 
 | Status | Meaning |
 |---|---|
-| `SUPPORTED` | Published terms clearly back the claim. |
-| `QUALIFIED` | True only with meaningful conditions, fees, or deadlines. |
-| `CONTRADICTED` | Published terms conflict with the claim. |
-| `UNVERIFIED` | Relevant official terms couldn't be found, read, or verified. |
+| 🟢 `SUPPORTED` | Published terms clearly back the claim. |
+| 🟡 `QUALIFIED` | True only with meaningful conditions, fees, or deadlines. |
+| 🔴 `CONTRADICTED` | Published terms conflict with the claim. |
+| ⚪ `UNVERIFIED` | Relevant official terms couldn't be found, read, or verified. |
 
-Each report includes the overall finding, promise vs. fine print, important conditions, verified source excerpts with links, open questions, and practical next steps.
+## 🎬 Demo
 
-## Quick start
+> 📹 **[Watch the 35-second demo](https://drive.google.com/file/d/165ZpCZd6ZquuaSfA50Q-TqmYAO-2QcBK/view?usp=sharing)**: a Delta Basic Economy question → live agent research → a **Qualified** verdict with verified quotes → a Booking.com screenshot read on-device by GenieX.
+
+The video was recorded from the running app by [`videos/record.mjs`](videos/record.mjs) using the scripted take in [`videos/demos/promiseproof.mjs`](videos/demos/promiseproof.mjs). Waiting periods are time-lapsed and labelled "sped up" on screen.
+
+## ⚡ Quick start
+
+**Prerequisites:** Node.js 20+, an [Anakin](https://anakin.io) API key, and one LLM key (Anthropic, OpenAI, or OpenRouter). For the screenshot feature you also need Docker and GenieX (see [GenieX setup](#-geniex-on-device-setup)).
 
 ```bash
-cp .env.example .env.local   # then fill in keys
+git clone https://github.com/itsnaveenk/ProofInvestigator.git
+cd ProofInvestigator
+cp .env.example .env.local   # add your keys
 npm install
-npm run dev                  # http://localhost:3000
+npm run dev                  # → http://localhost:3000
 ```
 
-Environment (server-side only, never exposed to the browser):
+### 🔑 Environment
 
-| Variable | Required | Notes |
+All keys stay **server-side** and are never sent to the browser.
+
+| Variable | Required | Purpose |
 |---|---|---|
-| `ANAKIN_API_KEY` | Yes | Anakin URL Scraper + Search API. |
-| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `OPENROUTER_API_KEY` | One of them | Anthropic preferred if set. `sk-or-…` keys are routed to OpenRouter automatically. |
-| `LLM_MODEL` | No | Hosted model override. Defaults: `claude-sonnet-5-5`, `gpt-4.1`, `openai/gpt-4.1` (OpenRouter). |
-| `GENIEX_BASE_URL` | No | GenieX server, default `http://127.0.0.1:18181/v1`. |
-| `GENIEX_VLM_MODEL` | For screenshots | e.g. `unsloth/Qwen3-VL-2B-Instruct-GGUF:Q4_0`. |
-| `GENIEX_AGENT_MODEL` | No | e.g. `unsloth/Qwen3-4B-Instruct-2507-GGUF:Q4_0`. When set, the agent and compare mode run fully on-device and no hosted key is needed. |
+| `ANAKIN_API_KEY` | ✅ | Anakin URL Scraper and Search API. |
+| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `OPENROUTER_API_KEY` | One of them ✅ | Hosted LLM. Anthropic is preferred if set; `sk-or-…` keys are routed to OpenRouter automatically. |
+| `LLM_MODEL` | — | Hosted model override. Defaults: `claude-sonnet-5-5`, `gpt-4.1`, `openai/gpt-4.1`. |
+| `GENIEX_BASE_URL` | — | GenieX server, default `http://127.0.0.1:18181/v1`. |
+| `GENIEX_VLM_MODEL` | 📸 | Vision model for screenshots, e.g. `unsloth/Qwen3-VL-2B-Instruct-GGUF:Q4_0`. |
+| `GENIEX_AGENT_MODEL` | — | e.g. `unsloth/Qwen3-4B-Instruct-2507-GGUF:Q4_0`. Runs the agent **fully on-device**; no hosted key needed. |
 
-## Using it
+## 🧭 How to use it
 
-**Ask the agent** (default tab) — one free-text box, links optional. Works with system-wide dictation (e.g. Wispr Flow) since it's a plain native textarea. The page streams each agent step live (searches, pages read, failures), then shows the report. Typical run: 20–40s.
+1. **🤖 Ask the agent** (default tab): describe the deal and your question, or click an example. Press **Investigate** and watch the agent search and read pages.
+2. **📸 Screenshot**: click **Attach screenshot** or paste an image into the box. GenieX extracts the provider, the offer, and the cancellation wording, then fills in a question for you to review.
+3. **🔗 Compare two pages**: paste an offer URL, a policy URL, and the claim.
 
-**Screenshot** — attach or paste a screenshot of a deal. Qualcomm GenieX reads it with a local vision model, so the image never leaves your machine, and fills in the question for you to review before investigating.
+## 🏗️ Architecture
 
-**Compare two pages** — supply an offer URL, a policy URL, and the claim. Both pages are scraped concurrently and compared directly. Use this when you already know exactly which pages matter.
-
-Both tabs include clickable examples using real public Delta and Booking.com pages.
-
-## Architecture
-
+```mermaid
+flowchart LR
+    U["🧑 User<br/>text · voice · screenshot"] --> UI["Next.js UI"]
+    UI -- screenshot --> SS["/api/screenshot"]
+    SS --> GX["🧠 GenieX on-device<br/>Qwen3-VL-2B"]
+    UI -- question --> AG["/api/agent<br/>(NDJSON stream)"]
+    AG <--> LLM["LLM<br/>OpenRouter · OpenAI · Anthropic · GenieX"]
+    AG -- web_search --> AS["🌐 Anakin Search API"]
+    AG -- fetch_page --> SC["🌐 Anakin URL Scraper"]
+    AG -- submit_report --> V["🛡️ Evidence verifier"]
+    V --> UI
 ```
+
+```text
 src/
-  app/
-    page.tsx                  UI: both modes, live agent trace, report view
-    api/agent/route.ts        POST {query} → NDJSON stream of agent events
-    api/investigate/route.ts  POST {offerUrl, policyUrl, claim} → JSON report
-    api/screenshot/route.ts   POST {image} → extracted offer + suggested question (GenieX VLM)
-  lib/
-    agent.ts                  Tool-calling agent loop
-    llm.ts                    Provider selection (GenieX / Anthropic / OpenAI / OpenRouter), one chat client
-    analyze.ts                Excerpt selection, LLM schema, evidence validation
-    anakin.ts                 Anakin scrape (+ polling) and search clients
-    safeUrl.ts                SSRF guard
-scripts/check.mts             Sanity check (synthetic fixtures)
-test-results/                 Raw responses from live runs
+├── app/
+│   ├── page.tsx                  UI: agent + compare modes, live trace, report
+│   └── api/
+│       ├── agent/route.ts        POST {query} → NDJSON stream of agent events
+│       ├── investigate/route.ts  POST {offerUrl, policyUrl, claim} → JSON report
+│       └── screenshot/route.ts   POST {image} → extracted offer + question (GenieX)
+└── lib/
+    ├── agent.ts                  Tool-calling agent loop
+    ├── llm.ts                    Provider selection + one OpenAI-compatible client
+    ├── analyze.ts                Excerpt selection, report schema, evidence verification
+    ├── anakin.ts                 Anakin scraper (with polling) and search clients
+    └── safeUrl.ts                SSRF guard
+scripts/check.mts                 Sanity checks (synthetic fixtures)
+videos/                           Demo recorder + scripted take
+test-results/                     Raw outputs from live runs
 ```
 
-### LLM providers (`src/lib/llm.ts`)
+### 🤖 The agent
 
-Every model is called through the OpenAI-compatible chat completions API: GenieX (local), Anthropic's compatibility endpoint, OpenAI, or OpenRouter. Selection order: `GENIEX_AGENT_MODEL` → `ANTHROPIC_API_KEY` → `OPENAI_API_KEY`/`OPENROUTER_API_KEY`. GenieX ignores `tool_choice`, so the final report is also requested in the prompt, and replies written as plain or fenced JSON are accepted.
+A tool-calling loop ([`src/lib/agent.ts`](src/lib/agent.ts)) with three tools:
 
-### Agent (`src/lib/agent.ts`)
+| Tool | Backed by | Notes |
+|---|---|---|
+| `web_search(query)` | Anakin Search API (`POST /v1/search`) | Finds official policy pages. Results are leads, never evidence. |
+| `fetch_page(url, focus)` | Anakin URL Scraper | Returns the parts relevant to `focus`; the full text is kept server-side for verification. |
+| `submit_report(...)` | Schema-validated output | Ends the run; then passes through the evidence verifier. |
 
-A tool-calling loop with three tools:
+- **Limits:** 10 turns / 5 page reads (hosted); 6 turns / 3 reads with smaller excerpts (on-device).
+- Independent tool calls run in parallel, and the same page is never fetched twice.
+- Events (`model`, `step`, `step_done`, `result`, `error`) stream to the UI as NDJSON.
 
-- `web_search(query)` → Anakin Search API (`POST /v1/search`). Results are leads only, never evidence.
-- `fetch_page(url, focus)` → Anakin URL Scraper. Returns the parts of the page relevant to `focus`; the full text is kept server-side for evidence checks. Same page under a different `#fragment` is reused.
-- `submit_report(...)` → final structured report; ends the run.
+### 🌐 Live web data with Anakin
 
-Limits: 10 model turns and 5 page reads on hosted models; 6 turns, 3 page reads, and smaller page excerpts on local models. Independent tool calls run in parallel. On the last turn the model is forced to submit. Events streamed to the UI: `step`, `step_done`, `note`, `result`, `error`.
+- `POST /v1/url-scraper/scrape` with `X-API-Key`. Job `status` is checked explicitly, because failed jobs can return HTTP 200.
+- A `202` or still-processing job is polled via `GET /v1/url-scraper/{id}` within a time budget.
+- Thin or empty content triggers a retry with `useBrowser: true` for JavaScript-heavy sites.
+- A target HTTP status ≥ 400, an empty page, or a timeout is reported as a **retrieval failure** and never replaced with mock data.
 
-### Scraping (`src/lib/anakin.ts`)
+### 🧠 LLM providers
 
-- `POST /v1/url-scraper/scrape` with `X-API-Key`. Job `status` is checked explicitly — failed jobs can return HTTP 200.
-- `202` / non-terminal status → polls `GET /v1/url-scraper/{id}` within a time budget (170s manual, 90s per agent fetch).
-- Thin or empty content → one retry with `useBrowser: true` (needed for JS-heavy sites).
-- Target HTTP ≥ 400, empty pages, and timeouts are reported as retrieval failures — never replaced with mock data.
+Every model, hosted or local, goes through **one OpenAI-compatible client** ([`src/lib/llm.ts`](src/lib/llm.ts)). Selection order: `GENIEX_AGENT_MODEL` → `ANTHROPIC_API_KEY` → `OPENAI_API_KEY` / `OPENROUTER_API_KEY`. Local-model quirks are handled: GenieX ignores `tool_choice`, so the report is also requested in the prompt, and fenced JSON replies are accepted.
 
-### Grounding and safety
+## 🛡️ Trust & safety
 
-- **Evidence must be real.** Every excerpt is matched (whitespace/markdown-normalized) against the full scraped text of the page it cites; non-matching excerpts are discarded and counted in the report.
-- **No verdict without proof.** Any status other than `UNVERIFIED` without at least one verified policy excerpt is downgraded to `UNVERIFIED`.
-- **Claim provenance.** `claimFoundOnOffer` is true only when a verified excerpt from an offer page backs it; otherwise the advertised claim is labeled unverified.
-- **Missing policy.** In manual mode, if the policy page can't be retrieved, the API returns `UNVERIFIED` without calling the LLM.
-- **Prompt injection.** Scraped pages and search results are wrapped as untrusted data; the system prompt forbids following instructions inside them.
-- **SSRF.** User and agent-chosen URLs must be http(s), standard ports, no credentials, and resolve only to public IPs. Anakin's reported `finalUrl` is re-checked to catch unsafe redirects.
+| | Guardrail |
+|---|---|
+| 🔒 | **Verified evidence.** Each quote is matched, after normalizing whitespace and markdown, against the full text of the page it cites. Non-matching quotes are dropped and counted in the report. |
+| ⚖️ | **No verdict without proof.** Anything other than `UNVERIFIED` needs at least one verified policy quote. |
+| 🏷️ | **Claim provenance.** "Found on offer page" is shown only when a verified offer-page quote backs it. |
+| 🚫 | **No invented terms.** If a page can't be retrieved, the app reports that and never substitutes mock content. |
+| 💉 | **Prompt-injection aware.** Scraped pages and search results are wrapped as untrusted data, and the model is told never to follow instructions inside them. |
+| 🌐 | **SSRF guard.** URLs must be http(s), use standard ports, contain no credentials, and resolve only to public IPs. Redirect targets are re-checked. |
+| 🔐 | **Private by design.** No accounts, database, or history. Screenshots are processed on-device by GenieX. |
 
-## GenieX on-device setup
+## 📱 GenieX on-device setup
 
-GenieX is Qualcomm's on-device runtime. On Snapdragon devices it uses the NPU. On Apple Silicon it runs CPU-only in Docker:
+[GenieX](https://github.com/qualcomm/GenieX) is Qualcomm's on-device AI runtime. On Snapdragon it runs on the NPU; on Apple Silicon it runs **CPU-only in Docker**:
 
 ```bash
 git clone --depth 1 https://github.com/qualcomm/GenieX.git && cd GenieX
@@ -103,43 +163,65 @@ docker build -f .github/docker/cpu-host.Dockerfile -t geniex-cpu-host .
 docker run -d --name geniex -p 127.0.0.1:18181:18181 -v "$PWD/data:/data" \
   -e GENIEX_NCTX=16384 -e GENIEX_THINK=false geniex-cpu-host geniex serve --host 0.0.0.0:18181
 docker exec geniex geniex pull unsloth/Qwen3-VL-2B-Instruct-GGUF:Q4_0 --model-type vlm
-docker exec geniex geniex pull unsloth/Qwen3-4B-Instruct-2507-GGUF:Q4_0   # optional, local agent
+docker exec geniex geniex pull unsloth/Qwen3-4B-Instruct-2507-GGUF:Q4_0   # optional: local agent
 ```
 
-Models are stored inside the container. Reuse it with `docker start geniex` rather than recreating it. `GENIEX_NCTX` raises the context window from the 4096-token default.
+> 💡 Models are stored inside the container. Use `docker start geniex` to reuse it instead of recreating it. `GENIEX_NCTX` raises the context window from the 4,096-token default.
 
-Measured on an M1 Pro (8 Docker CPUs, CPU only):
-- Screenshot reading (Qwen3-VL-2B): about 22–24 s per image.
-- Local agent (Qwen3-4B-Instruct-2507): correct searches and official Delta pages, but about 85 s per model turn, roughly 5–6 minutes per question (`test-results/local-a1-partial.log`). The hosted model takes about 25 s, so the demo uses a hosted LLM for the agent and GenieX for screenshots.
+**📊 Measured on an M1 Pro (8 Docker CPUs, CPU only):**
 
-## Testing
+| Workload | Model | Result |
+|---|---|---|
+| 📸 Screenshot reading | Qwen3-VL-2B (Q4_0) | ✅ ~22–24 s per image |
+| 🤖 Full agent on-device | Qwen3-4B-Instruct-2507 (Q4_0) | ✅ correct tool calls and official pages, but ~85 s per turn (≈5–6 min per question) |
+| 🤖 Full agent, hosted | GPT-4.1 via OpenRouter | ✅ ~24 s per question |
+
+That's why the demo uses a hosted LLM for the agent and GenieX for screenshots. On a Snapdragon NPU, setting `GENIEX_AGENT_MODEL` runs everything on-device.
+
+## 🧪 Testing
 
 ```bash
 node scripts/check.mts   # evidence matching, verdict downgrade, SSRF, JSON parsing, provider selection
+npm run lint             # ESLint
 npm run build            # type-check + production build
 ```
 
-Live scenarios run against real public pages (raw output in `test-results/`):
+**Live scenarios against real public pages** (raw outputs in [`test-results/`](test-results/)):
 
 | File | Mode | Scenario | Result |
 |---|---|---|---|
-| `s1.json` | Compare | Delta "no change fees" vs. Main Cabin refund | `QUALIFIED` |
-| `s2.json` | Compare | Basic Economy "full cash refund any time" | `CONTRADICTED` |
-| `s3.json`, `s3b.json` | Compare | Policy URL is a soft-404 (Delta, Booking.com) | `UNVERIFIED` |
-| `a1.ndjson` | Agent | Delta Basic Economy refund after 3 days | `QUALIFIED` |
-| `a2.ndjson` | Agent | Booking.com "free cancellation" | `QUALIFIED` |
-| `a3.ndjson` | Agent | Off-topic (weather) | `UNVERIFIED`, scope explained |
-| `demo-warmup.ndjson` | Agent | Demo query (Delta Basic Economy, 3 days) | `QUALIFIED`, 4 verified quotes, 24 s |
-| `screenshot-run1.json`, `screenshot-run2.json` | Screenshot | Real Booking.com results page (`screenshots/`) | Extracted "Free cancellation" |
+| `s1.json` | 🔗 Compare | Delta "no change fees" vs. Main Cabin refund | 🟡 `QUALIFIED` |
+| `s2.json`, `s2-recheck.json` | 🔗 Compare | Basic Economy "full cash refund any time" | 🔴 `CONTRADICTED` |
+| `s3.json`, `s3b.json` | 🔗 Compare | Policy URL is a soft-404 (Delta, Booking.com) | ⚪ `UNVERIFIED` |
+| `a1.ndjson` | 🤖 Agent | Delta Basic Economy refund after 3 days | 🟡 `QUALIFIED` |
+| `a2.ndjson` | 🤖 Agent | Booking.com "free cancellation" | 🟡 `QUALIFIED` |
+| `a3.ndjson` | 🤖 Agent | Off-topic (weather) | ⚪ `UNVERIFIED`, scope explained |
+| `demo-warmup.ndjson` | 🤖 Agent | Demo query | 🟡 `QUALIFIED`, 4 verified quotes, 24 s |
+| `screenshot-run*.json` | 📸 Screenshot | Real Booking.com results page | Extracted "Free cancellation" |
 
-## Known limitations
+## ⚠️ Known limitations
 
-- Scope is travel cancellation/refund claims.
-- The agent tends to use its full 5-page budget, so runs take 20–40s.
-- CPU-only GenieX on a Mac is slow; a fully local agent is practical on a Snapdragon NPU, not in Docker.
-- The small vision model's output varies between runs. Only cancellation, refund, and payment wording is kept, and you review the generated question before investigating.
-- Some sites serve "page not found" with HTTP 200; these are caught by the LLM (→ `UNVERIFIED`), not the scraper.
-- Requests are synchronous within one HTTP call (`maxDuration` 300s); no job queue.
-- No accounts, history, or database by design.
+- 🎯 Scope is travel cancellation and refund claims.
+- ⏱️ Hosted agent runs take 20–40 s; the agent often uses its full page budget.
+- 🐢 CPU-only GenieX on a Mac is slow; a fully on-device agent is practical on a Snapdragon NPU.
+- 🎲 The small vision model's output varies between runs. Only cancellation, refund, and payment wording is kept, and you review the question before it runs.
+- 🕳️ Some sites return "page not found" with HTTP 200; the LLM, not the scraper, catches these and returns `UNVERIFIED`.
+- 🧵 Requests run synchronously within one HTTP call (`maxDuration` 300 s); there's no job queue.
 
-PromiseProof summarizes published terms. It isn't legal advice.
+## 🛠️ Built with
+
+- **[Next.js 16](https://nextjs.org) + TypeScript + Tailwind CSS 4.** No database or auth, and no runtime dependencies beyond Next.js and React.
+- **[Anakin](https://anakin.io).** Live web search and scraping.
+- **[Qualcomm GenieX](https://github.com/qualcomm/GenieX).** On-device vision and LLM inference.
+- **[Wispr Flow](https://wisprflow.ai).** Voice dictation, used to build the project and to ask questions in the app.
+- **OpenRouter / OpenAI / Anthropic.** Hosted LLMs, all called through one OpenAI-compatible client.
+
+---
+
+<div align="center">
+
+Built by **Team 4Pizzas** 🍕🍕🍕🍕 at the Speed of Thought Meetup.
+
+<sub>PromiseProof summarizes published terms. It is not legal advice. Always confirm with the provider before you pay.</sub>
+
+</div>
