@@ -6,7 +6,7 @@ export const maxDuration = 300;
 
 export type SourceStatus = { role: "offer" | "policy" | "page"; url: string; ok: boolean; chars?: number; usedBrowser?: boolean; error?: string };
 export type InvestigateResponse =
-  | { ok: true; report: Report; sources: SourceStatus[]; rejectedEvidence: number; retrievalFailure: boolean }
+  | { ok: true; report: Report; sources: SourceStatus[]; rejectedEvidence: number; retrievalFailure: boolean; model?: string }
   | { ok: false; error: string; sources?: SourceStatus[] };
 
 const json = (body: InvestigateResponse, status = 200) => Response.json(body, { status });
@@ -66,11 +66,11 @@ export async function POST(req: Request) {
   }
 
   try {
-    const { report, rejected } = await analyze(claim, [
+    const { report, rejected, model } = await analyze(claim, [
       { role: "offer", url: offerUrl, markdown: offer.ok ? offer.markdown : null },
       { role: "policy", url: policyUrl, markdown: policy.markdown },
     ]);
-    return json({ ok: true, report, sources, rejectedEvidence: rejected, retrievalFailure: !offer.ok });
+    return json({ ok: true, report, sources, rejectedEvidence: rejected, retrievalFailure: !offer.ok, model });
   } catch (e) {
     return json({ ok: false, error: `Analysis failed: ${(e as Error).message}`, sources }, 502);
   }

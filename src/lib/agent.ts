@@ -1,23 +1,27 @@
 import { scrape, search } from "./anakin";
 import { SCHEMA, selectExcerpts, validateReport, type Report, type Source } from "./analyze";
+import { chat, llmConfig, parseJsonObject, type ToolCall } from "./llm";
 import { assertPublicUrl } from "./safeUrl";
 
 export type AgentEvent =
   | { type: "step"; id: string; tool: "web_search" | "fetch_page"; label: string }
   | { type: "step_done"; id: string; ok: boolean; summary: string }
   | { type: "note"; text: string }
-  | { type: "result"; report: Report; pages: { url: string; chars: number }[]; rejectedEvidence: number }
+  | { type: "model"; label: string; local: boolean }
+  | { type: "result"; report: Report; pages: { url: string; chars: number }[]; rejectedEvidence: number; model: string }
   | { type: "error"; error: string };
 
-const MAX_TURNS = 10;
-const MAX_FETCHES = 5;
 const FETCH_BUDGET_MS = 90_000;
+// Hosted models vs. small on-device models (smaller context, slower CPU inference).
+const LIMITS = {
+  hosted: { turns: 10, fetches: 5, pageChars: 9_000 },
+  local: { turns: 6, fetches: 3, pageChars: 3_000 },
+};
 
 type Msg =
   | { role: "system" | "user"; content: string }
   | { role: "assistant"; content: string | null; tool_calls?: ToolCall[] }
   | { role: "tool"; tool_call_id: string; content: string };
-type ToolCall = { id: string; type: "function"; function: { name: string; arguments: string } };
 
 const TOOLS = [
   {
@@ -95,38 +99,6 @@ Rules:
 - If the request is not about travel cancellations/refunds, submit UNVERIFIED and explain the tool's scope.
 - Write plainly for a non-lawyer. Be concise.`;
 
-function llm() {
-  const anthropic = process.env.ANTHROPIC_API_KEY;
-  const key = anthropic || process.env.OPENAI_API_KEY || process.env.OPENROUTER_API_KEY;
-  if (!key) throw new Error("No LLM API key configured (set ANTHROPIC_API_KEY, OPENAI_API_KEY or OPENROUTER_API_KEY).");
-  // One OpenAI-compatible tool-calling loop for all three providers.
-  if (anthropic) return { key, url: "https://api.anthropic.com/v1/chat/completions", model: process.env.LLM_MODEL || "claude-sonnet-5-5" };
-  if (key.startsWith("sk-or-")) return { key, url: "https://openrouter.ai/api/v1/chat/completions", model: process.env.LLM_MODEL || "openai/gpt-4.1" };
-  return { key, url: "https://api.openai.com/v1/chat/completions", model: process.env.LLM_MODEL || "gpt-4.1" };
-}
-
-async function chat(messages: Msg[], forceReport: boolean): Promise<{ content: string | null; tool_calls?: ToolCall[] }> {
-  const { key, url, model } = llm();
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
-    signal: AbortSignal.timeout(90_000),
-    body: JSON.stringify({
-      model,
-      temperature: 0,
-      max_tokens: 4000,
-      messages,
-      tools: TOOLS,
-      tool_choice: forceReport ? { type: "function", function: { name: "submit_report" } } : "auto",
-    }),
-  });
-  const data = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(`LLM error (${res.status}): ${data?.error?.message ?? "unknown"}`);
-  const msg = data?.choices?.[0]?.message;
-  if (!msg) throw new Error("LLM returned an empty response.");
-  return msg;
-}
-
 const short = (u: string) => {
   try {
     const x = new URL(u);
@@ -137,6 +109,9 @@ const short = (u: string) => {
 };
 
 export async function runAgent(query: string, emit: (e: AgentEvent) => void): Promise<void> {
+  const cfg = llmConfig();
+  const { turns: MAX_TURNS, fetches: MAX_FETCHES, pageChars } = cfg.local ? LIMITS.local : LIMITS.hosted;
+  emit({ type: "model", label: cfg.label, local: cfg.local });
   const pages = new Map<string, string>(); // url -> full markdown, for evidence grounding
   let fetches = 0;
   const messages: Msg[] = [
@@ -196,7 +171,7 @@ export async function runAgent(query: string, emit: (e: AgentEvent) => void): Pr
         pages.set(url, markdown);
       }
       emit({ type: "step_done", id, ok: true, summary: `${markdown.length.toLocaleString()} chars read` });
-      const excerpt = selectExcerpts(markdown, `${query} ${args.focus ?? ""}`, 9_000);
+      const excerpt = selectExcerpts(markdown, `${query} ${args.focus ?? ""}`, pageChars);
       return `<page url="${url}">\n${excerpt}\n</page>`;
     }
 
@@ -204,22 +179,23 @@ export async function runAgent(query: string, emit: (e: AgentEvent) => void): Pr
   }
 
   for (let turn = 0; turn < MAX_TURNS; turn++) {
-    const msg = await chat(messages, turn === MAX_TURNS - 1);
+    const last = turn === MAX_TURNS - 1;
+    // Local servers ignore tool_choice, so the final turn is also forced via the prompt.
+    if (last) messages.push({ role: "user", content: "Step limit reached. Call submit_report now with what you have." });
+    const msg = await chat(cfg, { messages, tools: TOOLS, forceTool: last ? "submit_report" : undefined });
     messages.push({ role: "assistant", content: msg.content ?? null, tool_calls: msg.tool_calls });
     if (msg.content?.trim() && msg.tool_calls?.length) emit({ type: "note", text: msg.content.trim() });
 
     const calls = msg.tool_calls ?? [];
     const report = calls.find((c) => c.function.name === "submit_report");
-    if (report) {
-      let raw: unknown;
-      try {
-        raw = JSON.parse(report.function.arguments);
-      } catch {
-        throw new Error("Agent submitted a malformed report.");
-      }
+    // Small models sometimes write the report as plain JSON instead of a tool call.
+    const inline = !calls.length ? (parseJsonObject(msg.content) as { status?: unknown } | null) : null;
+    if (report || inline?.status) {
+      const raw = report ? parseJsonObject(report.function.arguments) : inline;
+      if (!raw) throw new Error("Agent submitted a malformed report.");
       const sources: Source[] = [...pages].map(([url, markdown]) => ({ role: "policy", url, markdown }));
       const { report: validated, rejected } = validateReport(raw, sources);
-      emit({ type: "result", report: validated, rejectedEvidence: rejected, pages: [...pages].map(([url, md]) => ({ url, chars: md.length })) });
+      emit({ type: "result", report: validated, rejectedEvidence: rejected, model: cfg.label, pages: [...pages].map(([url, md]) => ({ url, chars: md.length })) });
       return;
     }
     if (!calls.length) {

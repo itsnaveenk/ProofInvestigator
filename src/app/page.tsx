@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { InvestigateResponse } from "./api/investigate/route";
 import type { AgentEvent } from "@/lib/agent";
+import type { ScreenshotResponse } from "./api/screenshot/route";
 import type { Status } from "@/lib/analyze";
 
 type Ok = Extract<InvestigateResponse, { ok: true }>;
@@ -37,6 +38,17 @@ const AGENT_EXAMPLES = [
   { label: "With a link", query: "https://www.delta.com/us/en/change-cancel/overview says no change fees. Does that mean I can cancel my Main Cabin flight for my money back?" },
 ];
 
+// Downscale before upload: fewer vision tokens → much faster on-device inference.
+async function toDataUrl(file: Blob, maxSide = 1024): Promise<string> {
+  const bmp = await createImageBitmap(file);
+  const scale = Math.min(1, maxSide / Math.max(bmp.width, bmp.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(bmp.width * scale);
+  canvas.height = Math.round(bmp.height * scale);
+  canvas.getContext("2d")!.drawImage(bmp, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL("image/jpeg", 0.85);
+}
+
 const host = (u: string) => {
   try {
     return new URL(u).hostname.replace(/^www\./, "");
@@ -49,6 +61,9 @@ export default function Home() {
   const [mode, setMode] = useState<"agent" | "manual">("agent");
   const [query, setQuery] = useState("");
   const [steps, setSteps] = useState<Step[]>([]);
+  const [agentModel, setAgentModel] = useState<{ label: string; local: boolean } | null>(null);
+  const [reading, setReading] = useState(false);
+  const [shot, setShot] = useState<{ preview: string; note: string } | null>(null);
   const [offerUrl, setOfferUrl] = useState("");
   const [policyUrl, setPolicyUrl] = useState("");
   const [claim, setClaim] = useState("");
@@ -91,6 +106,34 @@ export default function Home() {
     setError(null);
     setResult(null);
     setSteps([]);
+    setAgentModel(null);
+  }
+
+  async function readScreenshot(file: Blob) {
+    if (!file.type.startsWith("image/")) return setError("Please attach an image file.");
+    start();
+    setReading(true);
+    setShot(null);
+    try {
+      const image = await toDataUrl(file);
+      setShot({ preview: image, note: "Reading on-device…" });
+      const res = await fetch("/api/screenshot", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ image }),
+      });
+      const data = (await res.json().catch(() => null)) as ScreenshotResponse | null;
+      if (!data) throw new Error(`Server error (HTTP ${res.status}).`);
+      if (!data.ok) throw new Error(data.error);
+      setQuery(data.query);
+      setShot({ preview: image, note: `Read on-device by ${data.model} in ${Math.round(data.ms / 1000)}s. Review the question, then investigate.` });
+    } catch (err) {
+      setShot((s) => (s ? { ...s, note: "Couldn’t read this screenshot." } : null));
+      setError(err instanceof Error ? err.message : "Something went wrong.");
+    } finally {
+      setReading(false);
+      setLoading(false);
+    }
   }
 
   async function ask(e: React.FormEvent) {
@@ -118,7 +161,8 @@ export default function Home() {
         buf = lines.pop() ?? "";
         for (const line of lines.filter(Boolean)) {
           const ev = JSON.parse(line) as AgentEvent;
-          if (ev.type === "step") setSteps((s) => [...s, { id: ev.id, label: ev.label, state: "running" }]);
+          if (ev.type === "model") setAgentModel({ label: ev.label, local: ev.local });
+          else if (ev.type === "step") setSteps((s) => [...s, { id: ev.id, label: ev.label, state: "running" }]);
           else if (ev.type === "step_done") setSteps((s) => s.map((x) => (x.id === ev.id ? { ...x, state: ev.ok ? "ok" : "fail", summary: ev.summary } : x)));
           else if (ev.type === "error") throw new Error(ev.error);
           else if (ev.type === "result") {
@@ -128,6 +172,7 @@ export default function Home() {
               report: ev.report,
               rejectedEvidence: ev.rejectedEvidence,
               retrievalFailure: false,
+              model: ev.model,
               sources: ev.pages.map((p) => ({ role: cited(p.url), url: p.url, ok: true, chars: p.chars })),
             });
             requestAnimationFrame(() => document.getElementById("report")?.scrollIntoView({ behavior: "smooth", block: "start" }));
@@ -214,15 +259,46 @@ export default function Home() {
                   placeholder={'e.g. "I\'m booking a Delta Basic Economy fare. The site says no change fees — can I cancel later and get my money back?"'}
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
+                  onPaste={(e) => {
+                    const img = [...e.clipboardData.files].find((f) => f.type.startsWith("image/"));
+                    if (img) {
+                      e.preventDefault();
+                      readScreenshot(img);
+                    }
+                  }}
                   disabled={loading}
                 />
               </label>
+              <div className="mt-3 flex flex-wrap items-center gap-3 text-sm">
+                <label className={`inline-flex cursor-pointer items-center gap-2 rounded-lg border border-slate-200 px-3 py-1.5 font-medium text-slate-700 transition-colors hover:border-slate-400 ${loading ? "pointer-events-none opacity-50" : ""}`}>
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp"
+                    className="sr-only"
+                    disabled={loading}
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      e.target.value = "";
+                      if (f) readScreenshot(f);
+                    }}
+                  />
+                  Attach screenshot
+                </label>
+                <span className="text-slate-400">or paste one into the box · read privately on-device with GenieX</span>
+              </div>
+              {shot && (
+                <div className="mt-3 flex items-center gap-3 rounded-lg bg-slate-50 p-2.5 ring-1 ring-slate-200">
+                  {/* eslint-disable-next-line @next/next/no-img-element -- local data URL preview */}
+                  <img src={shot.preview} alt="Attached screenshot" className="h-14 w-20 shrink-0 rounded object-cover ring-1 ring-slate-200" />
+                  <p className="min-w-0 text-sm text-slate-600">{shot.note}</p>
+                </div>
+              )}
               <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <p className="text-sm text-slate-500">
                   {loading ? (
                     <span className="inline-flex items-center gap-2" aria-live="polite">
                       <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-300 border-t-slate-900" />
-                      Agent is researching… {elapsed}s
+                      {reading ? "Reading screenshot on-device" : "Agent is researching"}… {elapsed}s
                     </span>
                   ) : (
                     "The agent searches the web and reads official pages live. Nothing is stored."
@@ -237,7 +313,7 @@ export default function Home() {
                 </button>
               </div>
             </form>
-            {steps.length > 0 && <StepTrace steps={steps} />}
+            {(steps.length > 0 || (loading && agentModel)) && <StepTrace steps={steps} model={agentModel} />}
           </>
         ) : (
           <>
@@ -357,6 +433,7 @@ function Results({ data }: { data: Ok }) {
               {src.ok ? `${src.chars?.toLocaleString()} chars read` : "not retrieved"}
             </span>
           ))}
+          {data.model && <span className="rounded-md bg-slate-50 px-2 py-1 text-slate-500 ring-1 ring-slate-200">Analyzed by {data.model}</span>}
           {data.rejectedEvidence > 0 && (
             <span className="rounded-md bg-slate-50 px-2 py-1 text-slate-500 ring-1 ring-slate-200">
               {data.rejectedEvidence} unverifiable quote{data.rejectedEvidence > 1 ? "s" : ""} discarded
@@ -421,10 +498,13 @@ function Results({ data }: { data: Ok }) {
   );
 }
 
-function StepTrace({ steps }: { steps: Step[] }) {
+function StepTrace({ steps, model }: { steps: Step[]; model: { label: string; local: boolean } | null }) {
   return (
     <div className="mt-4 rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm sm:px-8" aria-live="polite">
-      <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Agent activity</h2>
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Agent activity</h2>
+        {model && <span className={`text-xs ${model.local ? "text-emerald-700" : "text-slate-400"}`}>{model.label}</span>}
+      </div>
       <ol className="mt-3 space-y-2 text-sm">
         {steps.map((s) => (
           <li key={s.id} className="flex items-start gap-2.5">

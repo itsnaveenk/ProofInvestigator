@@ -1,3 +1,5 @@
+import { chat, llmConfig, parseJsonObject } from "./llm";
+
 export const STATUSES = ["SUPPORTED", "QUALIFIED", "CONTRADICTED", "UNVERIFIED"] as const;
 export type Status = (typeof STATUSES)[number];
 
@@ -134,49 +136,6 @@ function userPrompt(claim: string, sources: Source[]): string {
   return `User claim/question:\n<claim>${claim}</claim>\n\n${blocks.join("\n\n")}\n\nAnalyze and return the report.`;
 }
 
-async function callAnthropic(key: string, prompt: string): Promise<unknown> {
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-    signal: AbortSignal.timeout(90_000),
-    body: JSON.stringify({
-      model: process.env.LLM_MODEL || "claude-sonnet-5-5",
-      max_tokens: 3000,
-      system: SYSTEM,
-      tools: [{ name: "report", description: "Return the investigation report.", input_schema: SCHEMA }],
-      tool_choice: { type: "tool", name: "report" },
-      messages: [{ role: "user", content: prompt }],
-    }),
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(`LLM error (${res.status}): ${data?.error?.message ?? "unknown"}`);
-  const block = data.content?.find((b: { type: string }) => b.type === "tool_use");
-  if (!block) throw new Error("LLM returned no structured report.");
-  return block.input;
-}
-
-// OpenAI-compatible chat completions (OpenAI or OpenRouter).
-async function callOpenAI(key: string, prompt: string): Promise<unknown> {
-  const openRouter = key.startsWith("sk-or-");
-  const url = openRouter ? "https://openrouter.ai/api/v1/chat/completions" : "https://api.openai.com/v1/chat/completions";
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
-    signal: AbortSignal.timeout(90_000),
-    body: JSON.stringify({
-      model: process.env.LLM_MODEL || (openRouter ? "openai/gpt-4.1" : "gpt-4.1"),
-      temperature: 0,
-      messages: [{ role: "system", content: SYSTEM }, { role: "user", content: prompt }],
-      response_format: { type: "json_schema", json_schema: { name: "report", strict: true, schema: SCHEMA } },
-    }),
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(`LLM error (${res.status}): ${data?.error?.message ?? "unknown"}`);
-  const content = data.choices?.[0]?.message?.content;
-  if (typeof content !== "string") throw new Error("LLM returned no structured report.");
-  return JSON.parse(content);
-}
-
 const strArr = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x) => typeof x === "string" && x.trim()).map((x) => x.trim()) : []);
 
 /** Schema validation + evidence grounding. Returns report and count of rejected excerpts. */
@@ -225,12 +184,21 @@ export function validateReport(raw: unknown, sources: Source[]): { report: Repor
 }
 
 export async function analyze(claim: string, sources: Source[]) {
-  const trimmed = sources.map((s) => ({ ...s, markdown: s.markdown && selectExcerpts(s.markdown, claim) }));
-  const prompt = userPrompt(claim, trimmed);
-  const anthropicKey = process.env.ANTHROPIC_API_KEY;
-  const openaiKey = process.env.OPENAI_API_KEY || process.env.OPENROUTER_API_KEY;
-  if (!anthropicKey && !openaiKey) throw new Error("No LLM API key configured (set ANTHROPIC_API_KEY, OPENAI_API_KEY or OPENROUTER_API_KEY).");
-  const raw = anthropicKey ? await callAnthropic(anthropicKey, prompt) : await callOpenAI(openaiKey!, prompt);
+  const cfg = llmConfig();
+  // Small local models get a smaller context: GenieX defaults to 4k tokens and runs on CPU here.
+  const budget = cfg.local ? 5_000 : 14_000;
+  const trimmed = sources.map((s) => ({ ...s, markdown: s.markdown && selectExcerpts(s.markdown, claim, budget) }));
+  const msg = await chat(cfg, {
+    messages: [
+      { role: "system", content: SYSTEM },
+      { role: "user", content: `${userPrompt(claim, trimmed)}\n\nRespond by calling submit_report.` },
+    ],
+    tools: [{ type: "function", function: { name: "submit_report", description: "Return the investigation report.", parameters: SCHEMA } }],
+    forceTool: "submit_report",
+  });
+  const call = msg.tool_calls?.find((c) => c.function.name === "submit_report");
+  const raw = call ? parseJsonObject(call.function.arguments) : parseJsonObject(msg.content);
+  if (!raw) throw new Error("LLM returned no structured report.");
   // Verify against full scraped text, not just the excerpts we sent.
-  return validateReport(raw, sources);
+  return { ...validateReport(raw, sources), model: cfg.label };
 }

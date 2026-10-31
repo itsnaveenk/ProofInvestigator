@@ -1,0 +1,2 @@
+{"ok":true,"query":"Booking.com — Hotel. The offer says: “Free cancellation”. Is that true under their published terms? If I cancel, do I get my money back?","provider":"Booking.com","offer":"Hotel","promises":["Free cancellation"],"model":"unsloth/Qwen3-VL-2B-Instruct-GGUF:Q4_0 · GenieX on-device","ms":23619}
+HTTP 200 23.730712s

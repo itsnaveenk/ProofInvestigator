@@ -1,0 +1,2 @@
+{"ok":true,"query":"Booking.com — Hotel F1 Paris Saint Ouen Marché Aux Puces. The offer says: “Free cancellation”, “No prepayment needed - pay at the property”, “We have 7 left this price”. Is that true under their published terms? If I cancel, do I get my money back?","provider":"Booking.com","offer":"Hotel F1 Paris Saint Ouen Marché Aux Puces","promises":["Free cancellation","No prepayment needed - pay at the property","We have 7 left this price"],"model":"unsloth/Qwen3-VL-2B-Instruct-GGUF:Q4_0 · GenieX on-device","ms":22093}
+HTTP 200 22.124511s
